@@ -56,6 +56,26 @@ Or override per-run without editing the file:
 codex -c model_provider=m365copilot -c model=m365-copilot
 ```
 
+## VS Code extension: known limitation
+
+The Codex **CLI** uses `~/.codex/config.toml` and works with this proxy. The
+Codex **VS Code extension currently does not** apply custom model providers for
+new conversations - it ignores the configured `model` / `model_provider` and
+falls back to a built-in OpenAI model, so it bypasses the proxy entirely. This
+is a known, unresolved issue in Codex:
+
+- openai/codex [#4558](https://github.com/openai/codex/issues/4558) - extension
+  ignores the custom model id and defaults to `gpt-5`/`gpt-5-codex`.
+- openai/codex [#6963](https://github.com/openai/codex/issues/6963) - custom
+  providers from `config.toml` don't show up in the extension's model list
+  (closed as a duplicate of #4558).
+
+**Workaround:** start the conversation from the CLI (`codex`), which uses the
+proxy, then continue / resume that same session inside the VS Code extension.
+Resumed CLI-initiated sessions keep the custom provider; brand-new chats started
+in the IDE do not. Until the extension respects custom providers, prefer the CLI
+for proxy-backed use.
+
 ## 3. Older Node `@openai/codex`
 
 That version honors env vars directly:
