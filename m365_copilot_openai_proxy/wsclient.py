@@ -21,7 +21,8 @@ import os
 import socket
 import ssl
 import struct
-from urllib.parse import urlsplit
+import urllib.request
+from urllib.parse import unquote, urlsplit
 
 _GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
@@ -50,7 +51,20 @@ class WebSocket:
     # -- construction -------------------------------------------------------
 
     @classmethod
-    def connect(cls, url: str, headers: dict | None = None, timeout: float = 30.0) -> "WebSocket":
+    def connect(
+        cls,
+        url: str,
+        headers: dict | None = None,
+        timeout: float = 30.0,
+        proxy: str | None = None,
+    ) -> "WebSocket":
+        """Open a WebSocket.
+
+        ``proxy`` is an HTTP proxy URL (e.g. ``http://user:pass@host:8080``) to
+        tunnel through via HTTP CONNECT. If ``None``, the proxy is taken from
+        the standard ``HTTPS_PROXY``/``HTTP_PROXY`` environment (respecting
+        ``NO_PROXY``); pass ``""`` to force a direct connection.
+        """
         parts = urlsplit(url)
         if parts.scheme not in ("ws", "wss"):
             raise WebSocketError(f"unsupported scheme: {parts.scheme!r}")
@@ -63,7 +77,13 @@ class WebSocket:
         if parts.query:
             resource += "?" + parts.query
 
-        sock = socket.create_connection((host, port), timeout=timeout)
+        if proxy is None:
+            proxy = _proxy_from_env(parts.scheme, host)
+
+        if proxy:
+            sock = _open_via_http_proxy(proxy, host, port, timeout)
+        else:
+            sock = socket.create_connection((host, port), timeout=timeout)
         try:
             if secure:
                 context = ssl.create_default_context()
@@ -246,3 +266,63 @@ class WebSocket:
 
     def __exit__(self, *exc):
         self.close()
+
+
+# --- HTTP proxy support (CONNECT tunnelling) -------------------------------
+
+def _proxy_from_env(scheme: str, host: str) -> str | None:
+    """Return the proxy URL for ``scheme`` from the environment, honouring
+    NO_PROXY. ``wss`` maps to the HTTPS proxy, ``ws`` to the HTTP proxy."""
+    try:
+        if urllib.request.proxy_bypass(host):
+            return None
+    except (ValueError, OSError):
+        pass
+    proxies = urllib.request.getproxies()
+    return proxies.get("https" if scheme == "wss" else "http")
+
+
+def _open_via_http_proxy(proxy: str, host: str, port: int, timeout: float) -> socket.socket:
+    """Open a TCP socket to ``host:port`` tunnelled through an HTTP proxy using
+    the CONNECT method. The returned socket carries raw bytes to the target, so
+    the caller can wrap it in TLS for ``wss``."""
+    if "://" not in proxy:
+        proxy = "http://" + proxy
+    p = urlsplit(proxy)
+    proxy_host = p.hostname
+    proxy_port = p.port or 80
+    if not proxy_host:
+        raise WebSocketError(f"invalid proxy URL: {proxy!r}")
+
+    sock = socket.create_connection((proxy_host, proxy_port), timeout=timeout)
+    try:
+        lines = [
+            f"CONNECT {host}:{port} HTTP/1.1",
+            f"Host: {host}:{port}",
+            "Proxy-Connection: keep-alive",
+        ]
+        if p.username:
+            raw = f"{unquote(p.username)}:{unquote(p.password or '')}".encode("utf-8")
+            lines.append("Proxy-Authorization: Basic " + base64.b64encode(raw).decode("ascii"))
+        sock.sendall(("\r\n".join(lines) + "\r\n\r\n").encode("ascii"))
+
+        # Read the CONNECT response one byte at a time so we never consume any
+        # bytes that belong to the tunnel itself (e.g. the start of the TLS
+        # handshake the caller is about to perform).
+        data = b""
+        while b"\r\n\r\n" not in data:
+            chunk = sock.recv(1)
+            if not chunk:
+                raise WebSocketError("proxy closed the connection during CONNECT")
+            data += chunk
+        status_line = data.split(b"\r\n", 1)[0].decode("latin-1", "replace")
+        fields = status_line.split(maxsplit=2)
+        if len(fields) < 2 or fields[1] != "200":
+            raise WebSocketError(f"proxy CONNECT failed: {status_line!r}")
+        return sock
+    except Exception:
+        try:
+            sock.close()
+        except OSError:
+            pass
+        raise

@@ -13,7 +13,7 @@ import socket
 import struct
 import threading
 
-from m365_copilot_openai_proxy.wsclient import WebSocket
+from m365_copilot_openai_proxy.wsclient import WebSocket, _proxy_from_env
 
 _GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
@@ -103,3 +103,95 @@ def test_wsclient_handshake_send_and_recv() -> None:
     t.join(timeout=5)
     assert received["msg"] == "hello-server"
     assert reply == "ping-pong"
+
+
+def _start_echo_server() -> tuple[int, dict]:
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    port = srv.getsockname()[1]
+    received: dict = {}
+
+    def serve():
+        conn, _ = srv.accept()
+        with conn:
+            _server_handshake(conn)
+            received["msg"] = _read_client_frame(conn).decode("utf-8")
+            conn.sendall(_server_frame(b"echo:" + received["msg"].encode()))
+
+    threading.Thread(target=serve, daemon=True).start()
+    return port, received
+
+
+def _start_connect_proxy(target_port: int) -> tuple[int, dict]:
+    """A minimal HTTP CONNECT proxy that tunnels to 127.0.0.1:<target_port>."""
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    port = srv.getsockname()[1]
+    seen: dict = {}
+
+    def pump(src, dst):
+        try:
+            while True:
+                data = src.recv(65536)
+                if not data:
+                    break
+                dst.sendall(data)
+        except OSError:
+            pass
+        finally:
+            for s in (src, dst):
+                try:
+                    s.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+    def serve():
+        client, _ = srv.accept()
+        req = b""
+        while b"\r\n\r\n" not in req:
+            chunk = client.recv(1024)
+            if not chunk:
+                return
+            req += chunk
+        request_line = req.split(b"\r\n", 1)[0].decode("latin-1")
+        seen["connect"] = request_line  # e.g. "CONNECT 127.0.0.1:<port> HTTP/1.1"
+        upstream = socket.create_connection(("127.0.0.1", target_port))
+        client.sendall(b"HTTP/1.1 200 Connection established\r\n\r\n")
+        threading.Thread(target=pump, args=(client, upstream), daemon=True).start()
+        threading.Thread(target=pump, args=(upstream, client), daemon=True).start()
+
+    threading.Thread(target=serve, daemon=True).start()
+    return port, seen
+
+
+def test_wsclient_connects_through_http_proxy() -> None:
+    echo_port, received = _start_echo_server()
+    proxy_port, seen = _start_connect_proxy(echo_port)
+
+    with WebSocket.connect(
+        f"ws://127.0.0.1:{echo_port}/chat",
+        proxy=f"http://127.0.0.1:{proxy_port}",
+    ) as ws:
+        ws.send("through-proxy")
+        reply = ws.recv(timeout=5)
+
+    assert received["msg"] == "through-proxy"
+    assert reply == "echo:through-proxy"
+    # confirm the connection actually went via the proxy's CONNECT tunnel
+    assert seen["connect"] == f"CONNECT 127.0.0.1:{echo_port} HTTP/1.1"
+
+
+def test_proxy_from_env_reads_standard_vars(monkeypatch) -> None:
+    monkeypatch.setenv("HTTPS_PROXY", "http://corp-proxy:8080")
+    monkeypatch.setenv("HTTP_PROXY", "http://corp-proxy:8080")
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
+    assert _proxy_from_env("wss", "substrate.office.com") == "http://corp-proxy:8080"
+
+    # NO_PROXY should suppress proxying for matching hosts
+    monkeypatch.setenv("NO_PROXY", "substrate.office.com")
+    assert _proxy_from_env("wss", "substrate.office.com") is None

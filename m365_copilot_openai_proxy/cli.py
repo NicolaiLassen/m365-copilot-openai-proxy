@@ -64,8 +64,13 @@ _CDP_NUDGE_JS = """
 
 # --- small HTTP helper (replaces httpx) ------------------------------------
 
+# The Edge DevTools endpoint and its CDP WebSocket are always on localhost, so
+# they must bypass any corporate proxy configured in the environment.
+_NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def _http_get_json(url: str, timeout: float):
-    with urllib.request.urlopen(url, timeout=timeout) as resp:
+    with _NO_PROXY_OPENER.open(url, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
@@ -94,7 +99,7 @@ def _cdp_extract_token(port: int, *, allow_nudge: bool = True) -> str | None:
         return None
 
     try:
-        with WebSocket.connect(tab["webSocketDebuggerUrl"]) as ws:
+        with WebSocket.connect(tab["webSocketDebuggerUrl"], proxy="") as ws:
             ws.send(json.dumps({"id": 1, "method": "Runtime.evaluate", "params": {"expression": _CDP_JS}}))
             result = _ws_read_until_id(ws, 1, timeout=5) or {}
             candidates = result.get("result", {}).get("result", {}).get("value") or []
@@ -123,7 +128,7 @@ def _cdp_capture_websocket_token(port: int, timeout_seconds: int) -> str | None:
             continue
 
         try:
-            with WebSocket.connect(tab["webSocketDebuggerUrl"]) as ws:
+            with WebSocket.connect(tab["webSocketDebuggerUrl"], proxy="") as ws:
                 ws.send(json.dumps({"id": 1, "method": "Network.enable"}))
                 token = _wait_for_substrate_websocket_token(ws, deadline)
                 if token:
