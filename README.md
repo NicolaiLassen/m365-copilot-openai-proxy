@@ -135,6 +135,36 @@ Then paste a fresh Substrate WebSocket URL:
 
 The command extracts `access_token` automatically and writes it to `.env`.
 
+## Behind A Corporate Proxy
+
+The Copilot chat WebSocket connects to `substrate.office.com` on the internet.
+On a locked-down corporate network that usually has to go through an HTTP proxy.
+(Token capture talks to a local Edge window, so it works without a proxy - which
+is why capture can succeed while chat requests fail.)
+
+Set the standard environment variable before starting the proxy. Because the
+chat URL is `wss://` (TLS), the client reads `HTTPS_PROXY`:
+
+```powershell
+$env:HTTPS_PROXY = "http://your-proxy-host:8080"
+python -m m365_copilot_openai_proxy serve
+```
+
+```sh
+export HTTPS_PROXY=http://your-proxy-host:8080
+python -m m365_copilot_openai_proxy serve
+```
+
+Notes:
+
+- The client tunnels through the proxy using HTTP `CONNECT`, auto-detecting the
+  proxy from `HTTPS_PROXY` / `HTTP_PROXY` and honoring `NO_PROXY`.
+- Local Edge DevTools traffic always bypasses the proxy automatically.
+- If the proxy requires a login, include credentials in the URL
+  (`http://user:pass@host:8080`). This is **Basic** auth only; for NTLM/Kerberos
+  proxies, run a local adapter (e.g. `cntlm` or `px`) and point `HTTPS_PROXY` at
+  it.
+
 ## Token Health
 
 ```powershell
