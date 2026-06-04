@@ -82,7 +82,10 @@ class SubstrateCopilotError(RuntimeError):
 
 
 class SubstrateCopilotClient:
-    def __init__(self, access_token: str, time_zone: str = "Asia/Tokyo"):
+    def __init__(self, access_token: str, time_zone: str = "Asia/Tokyo", proxy: str | None = None):
+        # proxy: None -> auto-detect from HTTPS_PROXY/HTTP_PROXY env (honoring
+        # NO_PROXY); "" -> force a direct connection; a URL -> use that proxy.
+        self._proxy = proxy
         if not access_token:
             raise SubstrateCopilotError(
                 "M365_ACCESS_TOKEN is missing. Start the debug Edge window and let startup token capture complete, "
@@ -209,7 +212,11 @@ class SubstrateCopilotClient:
         req_id = str(uuid.uuid4())
         url = self._ws_url(conv_id, session_id, req_id)
         try:
-            ws = WebSocket.connect(url, headers={"Origin": "https://m365.cloud.microsoft"})
+            ws = WebSocket.connect(
+                url,
+                headers={"Origin": "https://m365.cloud.microsoft"},
+                proxy=self._proxy,
+            )
         except Exception as exc:
             raise SubstrateCopilotError(str(exc)) from exc
 

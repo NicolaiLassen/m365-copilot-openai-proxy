@@ -340,6 +340,12 @@ def main() -> None:
     serve_parser.add_argument("--host", default="127.0.0.1")
     serve_parser.add_argument("--port", type=int, default=8000)
     serve_parser.add_argument("--cdp-port", type=int, default=9222)
+    serve_parser.add_argument(
+        "--proxy",
+        default=None,
+        help="HTTP proxy URL for the Copilot connection, e.g. http://host:8080 "
+        "(default: auto-detect from HTTPS_PROXY/HTTP_PROXY; use '' to force direct)",
+    )
     serve_parser.add_argument("--no-auto-refresh", action="store_true")
     serve_parser.add_argument("--no-launch-edge", action="store_true")
     serve_parser.add_argument("--no-capture-on-start", action="store_true")
@@ -401,7 +407,7 @@ def capture_token_command(args: argparse.Namespace) -> None:
 def serve_command(args: argparse.Namespace) -> None:
     cdp_port: int = args.cdp_port
     while True:
-        app = create_app()
+        app = create_app(proxy=args.proxy)
         server = Server(app, host=args.host, port=args.port)
         stop_auto_refresh = threading.Event()
         auto_refresh_thread = None

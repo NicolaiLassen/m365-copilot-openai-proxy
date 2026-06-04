@@ -64,12 +64,14 @@ class App:
         self,
         settings: Settings,
         copilot_client_factory: Callable[[], SubstrateCopilotClient] | None = None,
+        proxy: str | None = None,
     ):
         self.settings = settings
+        self.proxy = proxy
         self.token_store = AccessTokenStore(settings.access_token)
         self.session_store = PersistentSessionStore()
         self.copilot_client_factory = copilot_client_factory or (
-            lambda: SubstrateCopilotClient(self.token_store.get(), self.settings.time_zone)
+            lambda: SubstrateCopilotClient(self.token_store.get(), self.settings.time_zone, self.proxy)
         )
 
     # -- dispatch -----------------------------------------------------------
@@ -231,8 +233,9 @@ class App:
 def create_app(
     settings: Settings | None = None,
     copilot_client_factory: Callable[[], SubstrateCopilotClient] | None = None,
+    proxy: str | None = None,
 ) -> App:
-    return App(settings or Settings(), copilot_client_factory)
+    return App(settings or Settings(), copilot_client_factory, proxy)
 
 
 def _parse_json(body: bytes) -> dict:

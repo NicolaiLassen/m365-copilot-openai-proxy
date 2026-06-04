@@ -170,7 +170,7 @@ def test_default_client_factory_reloads_token_from_env(tmp_path, monkeypatch) ->
     seen_tokens: list[str] = []
 
     class RecordingCopilotClient(FakeCopilotClient):
-        def __init__(self, access_token: str, _time_zone: str):
+        def __init__(self, access_token: str, _time_zone: str, _proxy=None):
             super().__init__()
             seen_tokens.append(access_token)
 
@@ -190,6 +190,28 @@ def test_default_client_factory_reloads_token_from_env(tmp_path, monkeypatch) ->
 
     assert response.status_code == 200
     assert seen_tokens == [second_token]
+
+
+def test_proxy_arg_is_passed_to_client(monkeypatch) -> None:
+    seen: dict = {}
+
+    class RecordingCopilotClient(FakeCopilotClient):
+        def __init__(self, access_token, time_zone, proxy=None):
+            super().__init__()
+            seen["proxy"] = proxy
+
+    monkeypatch.setattr(
+        "m365_copilot_openai_proxy.app.SubstrateCopilotClient",
+        RecordingCopilotClient,
+    )
+    app = create_app(settings=Settings(M365_ACCESS_TOKEN="t"), proxy="http://corp:8080")
+    client = ProxyClient(app)
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "ignored", "messages": [{"role": "user", "content": "Hi"}]},
+    )
+    assert response.status_code == 200
+    assert seen["proxy"] == "http://corp:8080"
 
 
 def test_cli_reads_current_token_from_env(tmp_path, monkeypatch) -> None:
