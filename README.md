@@ -75,6 +75,8 @@ Use these settings for any OpenAI-compatible client:
 | Model | `m365-copilot` |
 | Persistent model | `m365-copilot:persist` |
 
+For the Codex CLI specifically, see [CODEX.md](CODEX.md).
+
 ## Persistent Sessions
 
 By default, requests are stateless from the Copilot side.
