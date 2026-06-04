@@ -1,0 +1,21 @@
+[project]
+name = "m365-copilot-openai-proxy"
+version = "0.1.0"
+description = "OpenAI-compatible shim for Microsoft 365 Copilot Chat (standard-library only, zero runtime dependencies)"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+# No runtime dependencies: this package uses only the Python standard library,
+# so it runs on a locked-down machine where you cannot pip install anything.
+dependencies = []
+
+[project.optional-dependencies]
+# Only needed to run the test suite; not required to run the proxy itself.
+dev = [
+    "pytest>=8.0.0",
+]
+
+[project.scripts]
+m365-copilot-openai-proxy = "m365_copilot_openai_proxy.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
