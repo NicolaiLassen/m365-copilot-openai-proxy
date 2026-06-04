@@ -278,12 +278,24 @@ def _seconds_remaining(token: str) -> int:
     return int(claims["exp"]) - int(time.time())
 
 
+def _token_exp(token: str | None) -> int | None:
+    if not token:
+        return None
+    try:
+        return int(decode_jwt_payload(token)["exp"])
+    except Exception:
+        return None
+
+
 def _auto_refresh_loop(
     cdp_port: int,
     refresh_before_seconds: int,
     retry_seconds: int,
     stop_event: threading.Event,
 ) -> None:
+    # Back off when Edge has no newer token, so we don't refresh (and log) every
+    # `retry_seconds` while the tab sits idle near expiry.
+    backoff_seconds = max(retry_seconds, 120)
     while not stop_event.is_set():
         token = _read_token()
         if not token:
@@ -298,14 +310,25 @@ def _auto_refresh_loop(
             continue
 
         if remaining > refresh_before_seconds:
-            wait_seconds = min(remaining - refresh_before_seconds, 300)
-            stop_event.wait(wait_seconds)
+            # Plenty of life left: sleep until we're near expiry. Nothing logged.
+            stop_event.wait(min(remaining - refresh_before_seconds, 300))
             continue
 
+        exp_before = _token_exp(token)
         print(f"Token expires in {max(remaining, 0)} seconds; refreshing from Edge...")
-        if not _try_auto_refresh(cdp_port):
-            print("Auto-refresh failed; will retry later.")
-        stop_event.wait(retry_seconds)
+        _try_auto_refresh(cdp_port)
+        exp_after = _token_exp(_read_token())
+
+        got_newer = exp_after is not None and (exp_before is None or exp_after > exp_before)
+        if got_newer:
+            stop_event.wait(retry_seconds)
+        else:
+            # Edge returned the same (or no) token. Stop hammering; wait longer.
+            print(
+                "No newer token from Edge yet; backing off "
+                f"{backoff_seconds}s. Open/refresh the Edge Copilot tab to mint one."
+            )
+            stop_event.wait(backoff_seconds)
 
 
 def _write_token(token: str) -> None:
